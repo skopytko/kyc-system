@@ -1,0 +1,57 @@
+webapp/uploads/
+webapp/static/
+webapp/__pycache__/
+__pycache__/
+*.pyc
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyo
+*.pyd
+*.pdb
+*.log
+*.sqlite3
+*.db
+*.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Environments
+venv/
+.env/
+.envrc
+.env
+
+# Data and results
+intermediate_results/
+inference_results/
+dataset/
+# Сгенерированные изображения Беларусь (гигабайты)
+docs_generator/belarus/data/
+archive/
+**/runs/
+mlruns/
+models/mlruns/
+seedream_output*/
+yolo11n.pt
+yolo11s-seg.pt
+passport_generator/data/
+borders_viz_yolo_pt/
+borders_viz_onnx/
+
+# OS
+.DS_Store
+Thumbs.db
+# TLS certs
+webapp/certs/*.pt
+*.pth

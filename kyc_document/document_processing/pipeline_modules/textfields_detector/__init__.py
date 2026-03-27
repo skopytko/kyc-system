@@ -1,0 +1,3 @@
+from .russia.passport.textfields_detector import TextFieldsDetector
+from .belarus.passport.textfields_detector import TextFieldsDetector as TextFieldsDetectorBelarus
+from .usa.textfields_detector import TextFieldsDetectorUSA

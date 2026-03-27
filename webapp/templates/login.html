@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KYC System — Авторизация</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #ffffff; color: #111827; display: grid; place-items: center; height: 100vh; }
+    .card { width: 100%; max-width: 420px; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
+    h1 { margin: 0 0 6px; font-size: 20px; }
+    p { margin: 0 0 16px; color: #374151; }
+    label { display: block; font-size: 13px; margin: 10px 0 6px; color: #374151; }
+    input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #e5e7eb; background: #ffffff; color: #111827; }
+    button { margin-top: 14px; width: 100%; background: #111827; color: #fff; border: 0; padding: 10px 16px; border-radius: 8px; cursor: pointer; }
+    .err { color: #b91c1c; margin-top: 8px; min-height: 20px; }
+  </style>
+  <script>
+    async function login(ev) {
+      ev.preventDefault();
+      const pass = document.getElementById('password').value;
+      const err = document.getElementById('err');
+      err.textContent = '';
+      if (!pass) { err.textContent = 'Введите пароль'; return; }
+
+      try {
+        // Get nonce and salt
+        const nonceRes = await fetch('/auth/nonce');
+        const { nonce, salt } = await nonceRes.json();
+
+        // response_hash = sha256( sha256(salt + password) + nonce )
+        const encoder = new TextEncoder();
+        const sha = async (buf) => {
+          const digest = await crypto.subtle.digest('SHA-256', buf);
+          return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2,'0')).join('');
+        };
+        const verifierHex = await sha(encoder.encode(salt + pass));
+        const responseHex = await sha(encoder.encode(verifierHex + nonce));
+
+        const fd = new FormData();
+        fd.append('response_hash', responseHex);
+        const res = await fetch('/auth/login', { method: 'POST', body: fd });
+        if (res.ok) {
+          window.location.href = '/';
+          return;
+        }
+        const data = await res.json();
+        err.textContent = data.error || 'Ошибка авторизации';
+      } catch (e) {
+        console.error(e);
+        err.textContent = 'Ошибка соединения';
+      }
+    }
+  </script>
+</head>
+<body>
+  <form class="card" onsubmit="login(event)">
+    <h1>Авторизация</h1>
+    <p>Введите пароль для доступа к системе</p>
+    <label for="password">Пароль</label>
+    <input id="password" type="password" autocomplete="current-password" />
+    <button type="submit">Войти</button>
+    <div id="err" class="err"></div>
+  </form>
+</body>
+</html>
+
+

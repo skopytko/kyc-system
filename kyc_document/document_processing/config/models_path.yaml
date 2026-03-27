@@ -1,0 +1,12 @@
+Angle90: models\Angles90
+DocDetector: models\Borders
+TextFieldsDetectorRussia: models\TextFields\russia\passport
+TextFieldsDetectorBelarus: models\TextFields\belarus\passport
+DocType: models\DocType
+Blur: models\Blur
+Glare: models\Glare
+LCDSpoofing: models\LCDSpoofing
+PrintSpoofing: models\PrintSpoofing
+WordsDetector: models\Words
+OCREngNums: models\OCR\eng+nums
+OCRRus: models\OCR\rus

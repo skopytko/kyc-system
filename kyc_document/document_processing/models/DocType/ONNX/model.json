@@ -1,0 +1,59 @@
+{
+    "Name": "model",
+    "Type": "Classifier",
+    "Format": "ONNX",
+    "File": "model.onnx",
+    "Input": [
+        {
+            "Name": "input",
+            "Shape": [
+                224,
+                224,
+                3
+            ],
+            "Normalization": [
+                0.485,
+                0.456,
+                0.406
+            ],
+            "NormalizationStd": [
+                0.229,
+                0.224,
+                0.225
+            ],
+            "PaddingSize": [
+                0,
+                0
+            ],
+            "PaddingColor": [
+                0,
+                0,
+                0
+            ]
+        }
+    ],
+    "Output": [
+        {
+            "Name": "output",
+            "Shape": [
+                14
+            ],
+            "Classes": [
+                "belarus_passport_1996",
+                "belarus_passport_biometric_2021",
+                "russia_passport",
+                "usa_alabama",
+                "usa_alaska",
+                "usa_arizona",
+                "usa_arkansas",
+                "usa_idaho",
+                "usa_iowa",
+                "usa_vermont",
+                "usa_virginia",
+                "usa_washington",
+                "usa_wisconsin",
+                "usa_wyoming"
+            ]
+        }
+    ]
+}

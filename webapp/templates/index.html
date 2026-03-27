@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KYC System — Распознавание документов</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #111827; background: #ffffff; }
+    .card { max-width: 960px; margin: 0 auto; padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+    h1 { margin: 0 0 12px; font-size: 20px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .preview { border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
+    .preview img { width: 100%; display: block; }
+    pre { background: #f8fafc; color: #111827; padding: 10px; border-radius: 6px; overflow: auto; max-height: 480px; border: 1px solid #e5e7eb; }
+    button { background: #111827; color: #ffffff; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .logout-top { position: fixed; top: 12px; right: 12px; }
+    .doc-badge { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 13px; font-weight: 600; margin-right: 6px; }
+    .doc-badge.russia { background: #dbeafe; color: #1e40af; }
+    .doc-badge.belarus { background: #dcfce7; color: #166534; }
+    .doc-badge.usa { background: #fef3c7; color: #92400e; }
+    .doc-badge.unknown { background: #f3f4f6; color: #374151; }
+    #capture-alert { display: none; margin: 16px 0 0 0; padding: 12px 14px; border-radius: 8px; background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; font-size: 14px; line-height: 1.45; }
+    #ocr-result-main { display: none; }
+    .drop-zone {
+      border: 2px dashed #d1d5db;
+      border-radius: 10px;
+      padding: 22px 18px;
+      text-align: center;
+      background: #f9fafb;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .drop-zone.dragover {
+      border-color: #111827;
+      background: #f3f4f6;
+    }
+    .drop-zone-hint { margin: 0 0 12px 0; color: #6b7280; font-size: 14px; line-height: 1.4; }
+    .drop-file-name { margin-top: 10px; font-size: 13px; color: #374151; min-height: 1.25em; word-break: break-all; }
+  </style>
+  <script>
+    function parseDocType(docType) {
+      const dt = (docType || '').toLowerCase();
+      if (dt.startsWith('usa_')) return { country: 'usa', state: dt.substring(4), label: 'USA — ' + dt.substring(4).replace(/^\w/, c => c.toUpperCase()) };
+      if (dt.startsWith('russia')) return { country: 'russia', state: null, label: 'Россия — Паспорт' };
+      if (dt.startsWith('belarus')) return { country: 'belarus', state: null, label: 'Беларусь — Паспорт' };
+      return { country: dt, state: null, label: docType || 'Неизвестно' };
+    }
+
+    const RUSSIA_FIELDS = [
+      ['Фамилия', 'Last_name_ru'],
+      ['Имя', 'First_name_ru'],
+      ['Отчество', 'Middle_name_ru'],
+      ['Фамилия (EN)', 'Last_name_en'],
+      ['Имя (EN)', 'First_name_en'],
+      ['Отчество (EN)', 'Middle_name_en'],
+      ['Пол', 'Sex_ru'],
+      ['Дата рождения', 'Birth_date'],
+      ['Место рождения', 'Birth_place_ru'],
+      ['Кем выдан', 'Issue_organization_ru'],
+      ['Дата выдачи', 'Issue_date'],
+      ['Дата окончания', 'Expiration_date'],
+      ['Код подразделения', 'Issue_organisation_code'],
+      ['Серия и номер', 'Licence_number'],
+    ];
+
+    const BELARUS_FIELDS = [
+      ['Номер паспорта', 'passport_no'],
+      ['Фамилия', 'surname'],
+      ['Имя', 'names'],
+      ['Гражданство', 'nationality'],
+      ['Дата рождения', 'date_of_birth'],
+      ['Идент. номер', 'identification_no'],
+      ['Пол', 'sex'],
+      ['Место рождения', 'place_of_birth'],
+      ['Дата выдачи', 'date_of_issue'],
+      ['Дата окончания', 'date_of_expiry'],
+      ['Орган выдачи', 'authority'],
+      ['Тип', 'type'],
+      ['Код выдачи', 'code_of_issuing'],
+    ];
+
+    // Соответствует dataset/generator_docs/usa + docs_generator/usa/generator.py:
+    // IMAGE_FIELDS (0–2): photo, mini_photo, handwritten_signature — OCR в пайплайне не делаем;
+    // TEXT_FIELDS (3–19): class…dob (20 классов YOLO, без отдельного dob_short).
+    const USA_FIELD_LABELS = {
+      field_0: 'Фото',
+      field_1: 'Мини-фото (на карте)',
+      field_2: 'Подпись',
+      field_3: 'Класс (Class)',
+      field_4: 'Ограничения (End)',
+      field_5: 'Код ограничений (Rest)',
+      field_6: 'Имя (First name)',
+      field_7: 'Фамилия (Last name)',
+      field_8: 'Адрес (Address)',
+      field_9: 'Пол (Sex)',
+      field_10: 'Рост (HGT)',
+      field_11: 'Вес (WGT)',
+      field_12: 'Цвет глаз (Eyes)',
+      field_13: 'Цвет волос (Hair)',
+      field_14: 'DD (контрольный номер)',
+      field_15: 'Номер DL (DLN)',
+      field_16: 'Дата выдачи (ISS)',
+      field_17: 'Дата выдачи — дубликат (ISS duplicate)',
+      field_18: 'Срок действия (EXP)',
+      field_19: 'Дата рождения (DOB)',
+    };
+    const USA_FIELD_ORDER = [
+      'field_7', 'field_6', 'field_8',
+      'field_19', 'field_9', 'field_10', 'field_11', 'field_12', 'field_13',
+      'field_3', 'field_4', 'field_5',
+      'field_14', 'field_15', 'field_16', 'field_17', 'field_18',
+    ];
+
+    async function submitForm(ev) {
+      ev.preventDefault();
+      const form = ev.target.closest('form');
+      const fileInput = form.querySelector('input[type=file]');
+      if (!fileInput.files[0]) return;
+
+      const btn = form.querySelector('button[type=submit]');
+      btn.disabled = true; btn.textContent = 'Обработка…';
+      try {
+        const fd = new FormData(form);
+        const res = await fetch('/api/ocr', { method: 'POST', body: fd });
+        const data = await res.json();
+
+        const rep = data.report || {};
+        const cap = data.capture || { ok: true };
+        const alertEl = document.getElementById('capture-alert');
+        const mainEl = document.getElementById('ocr-result-main');
+
+        alertEl.innerHTML = '';
+        alertEl.style.display = 'none';
+        mainEl.style.display = 'none';
+
+        const forceShow = form.querySelector('input[name="show_despite_capture_fail"]')?.checked === true;
+
+        if (!cap.ok) {
+          let msg = 'Снимок не подходит для автоматического распознавания.';
+          if (forceShow) {
+            msg += ' Распознанные поля и отчёт показаны по вашему запросу.';
+          }
+          alertEl.textContent = msg;
+          alertEl.style.display = 'block';
+        }
+
+        if (cap.ok || forceShow) {
+          mainEl.style.display = 'block';
+
+          const showPreviewsUi = form.querySelector('input[name="show_previews"]')?.checked === true;
+          const showTimingsUi = form.querySelector('input[name="show_timings"]')?.checked === true;
+          const showReportUi = form.querySelector('input[name="show_report"]')?.checked === true;
+
+          const reportEl = document.getElementById('report');
+          const reportSection = document.getElementById('report-section');
+          if (!showReportUi) {
+            reportSection.style.display = 'none';
+            reportEl.textContent = '';
+          } else {
+            reportSection.style.display = '';
+            reportEl.textContent = JSON.stringify(rep, null, 2);
+          }
+
+          const previewsSection = document.getElementById('previews-section');
+          const grid = document.getElementById('previews');
+          grid.innerHTML = '';
+          if (!showPreviewsUi) {
+            previewsSection.style.display = 'none';
+          } else {
+            previewsSection.style.display = '';
+            const previews = data.previews || {};
+            Object.entries(previews).forEach(([name, url]) => {
+              const div = document.createElement('div');
+              div.className = 'preview';
+              const caption = document.createElement('div');
+              caption.style.padding = '6px 8px';
+              caption.style.fontSize = '12px';
+              caption.textContent = name;
+              const img = document.createElement('img');
+              img.src = url;
+              div.appendChild(img);
+              div.appendChild(caption);
+              grid.appendChild(div);
+            });
+          }
+
+        const fieldsEl = document.getElementById('fields');
+        fieldsEl.innerHTML = '';
+        const docType = (rep.DocType || '').toString();
+        const parsed = parseDocType(docType);
+        const pageType = rep.PassportPageType || '';
+        const ocr = rep.OCR || {};
+
+        const addItem = (label, value) => {
+          const div = document.createElement('div');
+          div.className = 'item';
+          div.style.border = '1px solid #e5e7eb';
+          div.style.borderRadius = '6px';
+          div.style.padding = '8px';
+          const b = document.createElement('b');
+          b.textContent = label;
+          const content = document.createElement('div');
+          content.textContent = (value ?? '').toString().trim() || '—';
+          div.appendChild(b);
+          div.appendChild(content);
+          fieldsEl.appendChild(div);
+        };
+
+        const docInfoEl = document.getElementById('docinfo');
+        docInfoEl.innerHTML = '';
+        const badge = document.createElement('span');
+        badge.className = 'doc-badge ' + (['russia','belarus','usa'].includes(parsed.country) ? parsed.country : 'unknown');
+        badge.textContent = parsed.label;
+        docInfoEl.appendChild(badge);
+        if (pageType) {
+          const pt = document.createElement('span');
+          pt.className = 'doc-badge unknown';
+          pt.textContent = pageType === 'passport_centerfold' ? 'Основной разворот' : pageType === 'passport_pages' ? 'Страница паспорта' : pageType;
+          docInfoEl.appendChild(pt);
+        }
+
+        if (parsed.country === 'russia' && pageType === 'passport_centerfold') {
+          RUSSIA_FIELDS.forEach(([label, key]) => { if (ocr[key] != null) addItem(label, ocr[key]); });
+        } else if (parsed.country === 'belarus') {
+          BELARUS_FIELDS.forEach(([label, key]) => { if (ocr[key] != null) addItem(label, ocr[key]); });
+        } else if (parsed.country === 'usa') {
+          const shown = new Set();
+          USA_FIELD_ORDER.forEach((key) => {
+            if (ocr[key] == null || ocr[key] === '') return;
+            addItem(USA_FIELD_LABELS[key] || key, ocr[key]);
+            shown.add(key);
+          });
+          Object.entries(ocr).forEach(([key, val]) => {
+            if (shown.has(key)) return;
+            if (val == null || val === '') return;
+            if (key.startsWith('field_')) addItem(USA_FIELD_LABELS[key] || key, val);
+            else addItem(key, val);
+          });
+        } else if (ocr && typeof ocr === 'object' && Object.keys(ocr).length) {
+          Object.entries(ocr).forEach(([key, val]) => addItem(key, val));
+        } else if (parsed.country === 'russia' && pageType === 'passport_pages') {
+          addItem('Страница', 'Обнаружена страница паспорта (не центральный разворот)');
+        }
+
+        // Качество (данные всегда в отчёте; блок на странице — только если отмечен «Проверка качества»)
+        const showQualityUi = form.querySelector('input[name="show_quality"]')?.checked === true;
+        const qualitySection = document.getElementById('quality-section');
+        const qEl = document.getElementById('quality');
+        qEl.innerHTML = '';
+        if (!showQualityUi) {
+          qualitySection.style.display = 'none';
+        } else {
+          qualitySection.style.display = '';
+          const q = rep.Quality || {};
+          const addQ = (label, value) => {
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.style.border = '1px solid #e5e7eb';
+            div.style.borderRadius = '6px';
+            div.style.padding = '8px';
+            const b = document.createElement('b'); b.textContent = label;
+            const c = document.createElement('div'); c.textContent = (value ?? '—').toString();
+            div.appendChild(b); div.appendChild(c); qEl.appendChild(div);
+          };
+          if (Object.keys(q).length) {
+            // DocConf — max softmax по классам DocType (не константа); toFixed(3) давал «1.000» при ~0.9995+
+            addQ(
+              'Уверенность документа',
+              typeof q.DocConf === 'number'
+                ? `${(100 * q.DocConf).toFixed(2)}% (${q.DocConf.toFixed(5)})`
+                : q.DocConf
+            );
+            addQ('Блики', q.Glare);
+            addQ('Размытие', q.Blur);
+            addQ('Подделка печати', q.PrintSpoofing);
+            addQ('LCD-подделка', q.LCDSpoofing);
+          }
+        }
+
+        // Время
+        const timingsSection = document.getElementById('timings-section');
+        const tEl = document.getElementById('timings');
+        tEl.innerHTML = '';
+        if (!showTimingsUi) {
+          timingsSection.style.display = 'none';
+        } else {
+          timingsSection.style.display = '';
+          const t = rep.Timings || {};
+          if (Object.keys(t).length) {
+            const keys = Object.keys(t).sort((a,b)=> a==='total'?1 : b==='total'?-1 : 0);
+            keys.forEach(k => {
+              const div = document.createElement('div');
+              div.className = 'item';
+              div.style.border = '1px solid #e5e7eb';
+              div.style.borderRadius = '6px';
+              div.style.padding = '8px';
+              const b = document.createElement('b'); b.textContent = k;
+              const c = document.createElement('div'); c.textContent = (t[k] != null ? (typeof t[k] === 'number' ? t[k].toFixed(4) + 's' : t[k]) : '—');
+              div.appendChild(b); div.appendChild(c); tEl.appendChild(div);
+            });
+          }
+        }
+        }
+      } catch (e) {
+        alert('Ошибка обработки');
+        console.error(e);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Распознать';
+      }
+    }
+  </script>
+  </head>
+<body>
+  <div class="logout-top"><button onclick="logout()">Выйти</button></div>
+  <div class="card">
+    <h1>KYC System — Распознавание документов</h1>
+    <form id="ocr-form" onsubmit="submitForm(event)">
+      <div id="drop-zone" class="drop-zone">
+        <p class="drop-zone-hint">Перетащите изображение сюда из папки или нажмите «Выбрать файл».</p>
+        <div class="row" style="justify-content: center;">
+          <input id="ocr-file" name="file" type="file" accept="image/jpeg,image/png,image/bmp,image/tiff,.jpg,.jpeg,.png,.bmp,.tif,.tiff" required />
+        </div>
+        <div id="drop-file-name" class="drop-file-name" aria-live="polite"></div>
+      </div>
+      <div class="row" style="margin-top: 12px;">
+        <button type="submit">Распознать</button>
+      </div>
+      <div class="row" style="margin-top: 10px; font-size: 13px; color: #4b5563; align-items: flex-start;">
+        <span style="white-space: nowrap; padding-top: 2px;">Показать:</span>
+        <label title="Только отображение блока на странице.">
+          <input type="checkbox" name="show_quality" />
+          Проверка качества
+        </label>
+        <label title="Только отображение. Картинки этапов всё равно формируются на сервере.">
+          <input type="checkbox" name="show_previews" />
+          Предпросмотр этапов предобработки
+        </label>
+        <label title="Только отображение. Время всегда считается.">
+          <input type="checkbox" name="show_timings" />
+          Время выполнения
+        </label>
+        <label title="Только отображение JSON-отчёта (лог).">
+          <input type="checkbox" name="show_report" />
+          Полный отчёт (логи)
+        </label>
+        <label title="Если проверка съёмки не пройдена, всё равно показать поля OCR, предпросмотр и отчёт (по флажкам выше).">
+          <input type="checkbox" name="show_despite_capture_fail" />
+          Показать результаты при неудачной проверке
+        </label>
+      </div>
+    </form>
+
+    <div id="capture-alert" role="status" aria-live="polite"></div>
+
+    <div id="ocr-result-main">
+    <h3>Тип документа</h3>
+    <div id="docinfo" style="margin-bottom:12px;min-height:28px;"></div>
+
+    <div id="previews-section">
+    <h3>Предпросмотр</h3>
+    <div id="previews" class="grid"></div>
+    </div>
+
+    <h3>Распознанные поля</h3>
+    <div id="fields" class="grid"></div>
+
+    <div id="quality-section">
+    <h3>Качество</h3>
+    <div id="quality" class="grid"></div>
+    </div>
+
+    <div id="timings-section">
+    <h3>Время</h3>
+    <div id="timings" class="grid"></div>
+    </div>
+
+    <div id="report-section">
+    <h3>Полный отчет</h3>
+    <pre id="report"></pre>
+    </div>
+    </div>
+  </div>
+  <script>
+    async function logout(){
+      try { await fetch('/auth/logout', { method:'POST' }); location.href = '/login'; } catch {}
+    }
+
+    (function setupFileDropZone() {
+      const dropZone = document.getElementById('drop-zone');
+      const fileInput = document.getElementById('ocr-file');
+      const nameEl = document.getElementById('drop-file-name');
+      if (!dropZone || !fileInput) return;
+
+      const allowedExt = /\.(jpe?g|png|bmp|tiff?)$/i;
+      function isAllowedImage(file) {
+        if (!file) return false;
+        if (file.type && file.type.startsWith('image/')) return true;
+        return allowedExt.test(file.name || '');
+      }
+
+      function setFileLabel() {
+        const f = fileInput.files && fileInput.files[0];
+        nameEl.textContent = f ? ('Выбрано: ' + f.name) : '';
+      }
+      fileInput.addEventListener('change', setFileLabel);
+
+      let dragDepth = 0;
+      function onDragEnter(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragDepth++;
+        dropZone.classList.add('dragover');
+      }
+      function onDragOver(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+      function onDragLeave(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragDepth--;
+        if (dragDepth <= 0) {
+          dragDepth = 0;
+          dropZone.classList.remove('dragover');
+        }
+      }
+      function onDrop(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragDepth = 0;
+        dropZone.classList.remove('dragover');
+        const files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || !files.length) return;
+        const file = files[0];
+        if (!isAllowedImage(file)) {
+          alert('Нужен файл изображения: JPG, PNG, BMP или TIFF.');
+          return;
+        }
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          fileInput.files = dt.files;
+        } catch (err) {
+          console.error(err);
+          alert('Не удалось принять файл. Попробуйте «Выбрать файл».');
+          return;
+        }
+        setFileLabel();
+      }
+
+      dropZone.addEventListener('dragenter', onDragEnter);
+      dropZone.addEventListener('dragover', onDragOver);
+      dropZone.addEventListener('dragleave', onDragLeave);
+      dropZone.addEventListener('drop', onDrop);
+    })();
+  </script>
+</body>
+</html>
+
+
