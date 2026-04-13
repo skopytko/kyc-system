@@ -36,7 +36,9 @@
       background: #f3f4f6;
     }
     .drop-zone-hint { margin: 0 0 12px 0; color: #6b7280; font-size: 14px; line-height: 1.4; }
+    .drop-zone-formats { margin: 0; color: #6b7280; font-size: 12.5px; line-height: 1.4; }
     .drop-file-name { margin-top: 10px; font-size: 13px; color: #374151; min-height: 1.25em; word-break: break-all; }
+    .file-error { margin-top: 10px; font-size: 13px; color: #7f1d1d; min-height: 1.25em; }
   </style>
   <script>
     function parseDocType(docType) {
@@ -84,32 +86,32 @@
     // IMAGE_FIELDS (0–2): photo, mini_photo, handwritten_signature — OCR в пайплайне не делаем;
     // TEXT_FIELDS (3–19): class…dob (20 классов YOLO, без отдельного dob_short).
     const USA_FIELD_LABELS = {
-      field_0: 'Фото',
-      field_1: 'Мини-фото (на карте)',
-      field_2: 'Подпись',
-      field_3: 'Класс (Class)',
-      field_4: 'Ограничения (End)',
-      field_5: 'Код ограничений (Rest)',
-      field_6: 'Имя (First name)',
-      field_7: 'Фамилия (Last name)',
-      field_8: 'Адрес (Address)',
-      field_9: 'Пол (Sex)',
-      field_10: 'Рост (HGT)',
-      field_11: 'Вес (WGT)',
-      field_12: 'Цвет глаз (Eyes)',
-      field_13: 'Цвет волос (Hair)',
-      field_14: 'DD (контрольный номер)',
-      field_15: 'Номер DL (DLN)',
-      field_16: 'Дата выдачи (ISS)',
-      field_17: 'Дата выдачи — дубликат (ISS duplicate)',
-      field_18: 'Срок действия (EXP)',
-      field_19: 'Дата рождения (DOB)',
+      photo: 'Фото',
+      mini_photo: 'Мини-фото (на карте)',
+      handwritten_signature: 'Подпись',
+      class: 'Класс (Class)',
+      end: 'Ограничения (End)',
+      rest: 'Код ограничений (Rest)',
+      firstname: 'Имя (First name)',
+      lastname: 'Фамилия (Last name)',
+      address: 'Адрес (Address)',
+      sex: 'Пол (Sex)',
+      hgt: 'Рост (HGT)',
+      wgt: 'Вес (WGT)',
+      eyes: 'Цвет глаз (Eyes)',
+      hair: 'Цвет волос (Hair)',
+      dd: 'DD (контрольный номер)',
+      dln: 'Номер DL (DLN)',
+      iss: 'Дата выдачи (ISS)',
+      iss_duplicate: 'Дата выдачи — дубликат (ISS duplicate)',
+      exp: 'Срок действия (EXP)',
+      dob: 'Дата рождения (DOB)',
     };
     const USA_FIELD_ORDER = [
-      'field_7', 'field_6', 'field_8',
-      'field_19', 'field_9', 'field_10', 'field_11', 'field_12', 'field_13',
-      'field_3', 'field_4', 'field_5',
-      'field_14', 'field_15', 'field_16', 'field_17', 'field_18',
+      'lastname', 'firstname', 'address',
+      'dob', 'sex', 'hgt', 'wgt', 'eyes', 'hair',
+      'class', 'end', 'rest',
+      'dd', 'dln', 'iss', 'iss_duplicate', 'exp',
     ];
 
     async function submitForm(ev) {
@@ -140,6 +142,11 @@
           let msg = 'Снимок не подходит для автоматического распознавания.';
           if (forceShow) {
             msg += ' Распознанные поля и отчёт показаны по вашему запросу.';
+          }
+          const reasons = Array.isArray(cap.reasons) ? cap.reasons : [];
+          if (reasons.length) {
+            const titles = reasons.map((r) => (r && r.title) ? r.title : (r && r.code) ? r.code : 'unknown');
+            msg += ' Причины: ' + titles.join('; ') + '.';
           }
           alertEl.textContent = msg;
           alertEl.style.display = 'block';
@@ -234,8 +241,7 @@
           Object.entries(ocr).forEach(([key, val]) => {
             if (shown.has(key)) return;
             if (val == null || val === '') return;
-            if (key.startsWith('field_')) addItem(USA_FIELD_LABELS[key] || key, val);
-            else addItem(key, val);
+            addItem(USA_FIELD_LABELS[key] || key, val);
           });
         } else if (ocr && typeof ocr === 'object' && Object.keys(ocr).length) {
           Object.entries(ocr).forEach(([key, val]) => addItem(key, val));
@@ -318,13 +324,15 @@
     <form id="ocr-form" onsubmit="submitForm(event)">
       <div id="drop-zone" class="drop-zone">
         <p class="drop-zone-hint">Перетащите изображение сюда из папки или нажмите «Выбрать файл».</p>
+        <p class="drop-zone-formats">Допустимые форматы: <b>{{ allowed_formats_label or 'JPG, JPEG, PNG, BMP, TIF, TIFF' }}</b>.</p>
         <div class="row" style="justify-content: center;">
           <input id="ocr-file" name="file" type="file" accept="image/jpeg,image/png,image/bmp,image/tiff,.jpg,.jpeg,.png,.bmp,.tif,.tiff" required />
         </div>
         <div id="drop-file-name" class="drop-file-name" aria-live="polite"></div>
+        <div id="file-error" class="file-error" aria-live="polite"></div>
       </div>
       <div class="row" style="margin-top: 12px;">
-        <button type="submit">Распознать</button>
+        <button id="submit-btn" type="submit">Распознать</button>
       </div>
       <div class="row" style="margin-top: 10px; font-size: 13px; color: #4b5563; align-items: flex-start;">
         <span style="white-space: nowrap; padding-top: 2px;">Показать:</span>
@@ -390,6 +398,8 @@
       const dropZone = document.getElementById('drop-zone');
       const fileInput = document.getElementById('ocr-file');
       const nameEl = document.getElementById('drop-file-name');
+      const errEl = document.getElementById('file-error');
+      const submitBtn = document.getElementById('submit-btn');
       if (!dropZone || !fileInput) return;
 
       const allowedExt = /\.(jpe?g|png|bmp|tiff?)$/i;
@@ -403,7 +413,29 @@
         const f = fileInput.files && fileInput.files[0];
         nameEl.textContent = f ? ('Выбрано: ' + f.name) : '';
       }
-      fileInput.addEventListener('change', setFileLabel);
+      function setError(msg) {
+        if (errEl) errEl.textContent = msg || '';
+      }
+      function setSubmitEnabled(enabled) {
+        if (!submitBtn) return;
+        submitBtn.disabled = !enabled;
+      }
+
+      fileInput.addEventListener('change', () => {
+        const f = fileInput.files && fileInput.files[0];
+        setError('');
+        if (!f) { setFileLabel(); setSubmitEnabled(true); return; }
+        if (!isAllowedImage(f)) {
+          // Clear selection to prevent accidental upload
+          fileInput.value = '';
+          setFileLabel();
+          setSubmitEnabled(false);
+          setError('Недопустимый формат. Разрешены: JPG, JPEG, PNG, BMP, TIF, TIFF.');
+          return;
+        }
+        setFileLabel();
+        setSubmitEnabled(true);
+      });
 
       let dragDepth = 0;
       function onDragEnter(e) {
@@ -435,7 +467,8 @@
         if (!files || !files.length) return;
         const file = files[0];
         if (!isAllowedImage(file)) {
-          alert('Нужен файл изображения: JPG, PNG, BMP или TIFF.');
+          setError('Недопустимый формат. Разрешены: JPG, JPEG, PNG, BMP, TIF, TIFF.');
+          setSubmitEnabled(false);
           return;
         }
         try {
@@ -447,6 +480,8 @@
           alert('Не удалось принять файл. Попробуйте «Выбрать файл».');
           return;
         }
+        setError('');
+        setSubmitEnabled(true);
         setFileLabel();
       }
 

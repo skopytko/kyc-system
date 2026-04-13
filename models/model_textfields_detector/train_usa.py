@@ -93,7 +93,31 @@ def prepare_yolo_dataset(dataset_path, output_dir, train_ratio=0.8, val_ratio=0.
     else:
         max_id = get_max_class_id(labels_dir)
         nc = max_id + 1
-        class_names = [f'field_{i}' for i in range(nc)]
+        # Совпадает с docs_generator/usa/generator.py:
+        # IMAGE_FIELDS (0–2) + TEXT_FIELDS без dob_short (через dob) => 20 классов.
+        default_names_20 = [
+            "photo",
+            "mini_photo",
+            "handwritten_signature",
+            "class",
+            "end",
+            "rest",
+            "firstname",
+            "lastname",
+            "address",
+            "sex",
+            "hgt",
+            "wgt",
+            "eyes",
+            "hair",
+            "dd",
+            "dln",
+            "iss",
+            "iss_duplicate",
+            "exp",
+            "dob",
+        ]
+        class_names = default_names_20[:nc] if nc <= len(default_names_20) else (default_names_20 + [f"class_{i}" for i in range(len(default_names_20), nc)])
 
     yaml_path = os.path.join(output_dir, 'data.yaml')
     with open(yaml_path, 'w', encoding='utf-8') as f:

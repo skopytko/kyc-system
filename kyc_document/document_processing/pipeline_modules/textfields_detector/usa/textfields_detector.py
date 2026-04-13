@@ -12,7 +12,31 @@ USA_STATES = [
 
 # Индексы как в docs_generator/usa/generator.py: IMAGE_FIELDS (0–2) + TEXT_FIELDS без последнего
 # элемента dob_short (в YOLO 20 классов: photo, mini_photo, handwritten_signature, class…dob).
-USA_FIELD_LABELS = [f'field_{i}' for i in range(20)]
+# Человеко-читаемые ключи, которые возвращаем наружу (вместо field_0..field_19).
+USA_FIELD_LABELS = [
+    # IMAGE_FIELDS (0–2)
+    "photo",
+    "mini_photo",
+    "handwritten_signature",
+    # TEXT_FIELDS (без dob_short)
+    "class",
+    "end",
+    "rest",
+    "firstname",
+    "lastname",
+    "address",
+    "sex",
+    "hgt",
+    "wgt",
+    "eyes",
+    "hair",
+    "dd",
+    "dln",
+    "iss",
+    "iss_duplicate",
+    "exp",
+    "dob",
+]
 # address в генераторе — поле address (class id 8 = field_8): несколько строк → несколько bbox.
 USA_ADDRESS_CLASS_ID = 8
 USA_ADDRESS_CONF_THRESHOLD = 0.5

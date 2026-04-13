@@ -256,12 +256,7 @@ class YoloDetectorPostprocessing(BasePostprocessing):
             return detect_res
 
         n_classes = len(self.labels)
-        # Применяем sigmoid к вероятностям классов (они приходят как логиты)
-        det_logits = vector[..., 4:4+n_classes]
-        det_probs = 1 / (1 + np.exp(-det_logits))  # sigmoid activation
-        # Заменяем логиты на активированные вероятности
-        vector_activated = np.concatenate([vector[..., :4], det_probs], axis=1)
-        vector = vector_activated[det_probs.max(axis=1) > self.cls]
+        vector = vector[vector[..., 4:4+n_classes].max(axis=1) > self.cls]
 
         if len(vector) == 0:
             return []

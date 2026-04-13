@@ -42,6 +42,10 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 
+# Allowed upload formats (must match frontend hints & validation)
+ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+ALLOWED_FORMATS_LABEL = "JPG, JPEG, PNG, BMP, TIF, TIFF"
+
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
@@ -94,7 +98,14 @@ def require_auth(request: Request):
 async def index(request: Request):
     if not request.session.get("auth"):
         return RedirectResponse(url="/login", status_code=302)
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "allowed_formats_label": ALLOWED_FORMATS_LABEL,
+            "allowed_suffixes": sorted(ALLOWED_SUFFIXES),
+        },
+    )
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -139,8 +150,14 @@ async def ocr_endpoint(
     _: None = Depends(require_auth),
 ):
     suffix = Path(file.filename).suffix.lower()
-    if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}:
-        return JSONResponse(status_code=400, content={"error": "Unsupported file type"})
+    if suffix not in ALLOWED_SUFFIXES:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "Unsupported file type",
+                "allowed_formats": ALLOWED_FORMATS_LABEL,
+            },
+        )
 
     # Save uploaded file to disk for consistent pipeline I/O
     uid = uuid.uuid4().hex

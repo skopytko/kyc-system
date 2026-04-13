@@ -10,6 +10,8 @@ class TextFieldsDetector:
     Uses ultralytics YOLO directly for better compatibility.
     """
 
+    CONF_THRESHOLD = 0.01
+
     def __init__(self, model_format: str = 'PT', device='cpu', verbose: bool = False):
         """Initializes the text field detection model for Belarus."""
         self.model_name = 'TextFieldsDetectorBelarus'
@@ -66,7 +68,7 @@ class TextFieldsDetector:
         """
         img = self.load_img(img)
         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        results = self.model(img_bgr, conf=0.04, verbose=self.verbose)
+        results = self.model(img_bgr, conf=self.CONF_THRESHOLD, verbose=self.verbose)
         
         labels = ['authority', 'authority2', 'code_of_issuing', 'date_of_birth',
                   'date_of_expiry', 'date_of_issue', 'identification_no', 'names',
@@ -93,7 +95,7 @@ class TextFieldsDetector:
         """
         img = self.load_img(img)
         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        results = self.model(img_bgr, conf=0.04, verbose=self.verbose)
+        results = self.model(img_bgr, conf=self.CONF_THRESHOLD, verbose=self.verbose)
         
         labels = ['authority', 'authority2', 'code_of_issuing', 'date_of_birth',
                   'date_of_expiry', 'date_of_issue', 'identification_no', 'names',

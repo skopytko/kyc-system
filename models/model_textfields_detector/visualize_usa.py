@@ -43,7 +43,29 @@ def load_class_names(state: str) -> list[str]:
         if isinstance(names, list) and names:
             return [str(n) for n in names]
     #Fallback: 30 абстрактных полей
-    return [f"field_{i}" for i in range(30)]
+    default_names_20 = [
+        "photo",
+        "mini_photo",
+        "handwritten_signature",
+        "class",
+        "end",
+        "rest",
+        "firstname",
+        "lastname",
+        "address",
+        "sex",
+        "hgt",
+        "wgt",
+        "eyes",
+        "hair",
+        "dd",
+        "dln",
+        "iss",
+        "iss_duplicate",
+        "exp",
+        "dob",
+    ]
+    return default_names_20 + [f"class_{i}" for i in range(len(default_names_20), 30)]
 
 
 def draw_boxes(img, results, class_names, conf_threshold: float = 0.25):
