@@ -28,7 +28,10 @@ for ln in lines:
     if in_pip:
         m = re.match(r"^\\s*-\\s*(.+?)\\s*$", ln)
         if m:
-            pip.append(m.group(1).strip())
+            dep = m.group(1).strip()
+            if not dep or dep.startswith("#"):
+                continue
+            pip.append(dep)
         else:
             # end of pip block
             if ln.strip() and not ln.lstrip().startswith("#"):
@@ -38,16 +41,20 @@ for ln in lines:
 skip = {"torch", "torchvision"}
 out = []
 for dep in pip:
+    dep = dep.strip()
+    if not dep or dep.startswith("#"):
+        continue
     name = dep.split("==")[0].split(">=")[0].split("<=")[0].split("~=")[0].strip().lower()
     if name in skip:
         continue
     out.append(dep)
 
-Path("/app/requirements.docker.txt").write_text("\\n".join(out) + "\\n", encoding="utf-8")
+content = "\\n".join(out).strip()
+Path("/app/requirements.docker.txt").write_text((content + "\\n") if content else "", encoding="utf-8")
 print("Wrote requirements.docker.txt with", len(out), "deps")
 PY
 
-RUN pip install --no-cache-dir -r /app/requirements.docker.txt
+RUN if [ -s /app/requirements.docker.txt ]; then pip install --no-cache-dir -r /app/requirements.docker.txt; fi
 
 # Copy repo
 COPY . /app
