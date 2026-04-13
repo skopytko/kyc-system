@@ -1,4 +1,5 @@
-FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+# RTX 50xx (Blackwell) требует более нового CUDA/torch, иначе "no kernel image".
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 
 WORKDIR /app
 
