@@ -1,0 +1,30 @@
+services:
+  kyc-webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kyc-system:cuda
+    restart: unless-stopped
+    ports:
+      - "${KYC_PUBLIC_PORT:-8000}:8000"
+    environment:
+      # Auth
+      AUTH_PASSWORD: "${AUTH_PASSWORD:-admin123}"
+      AUTH_SALT: "${AUTH_SALT:-rdo-default-salt}"
+      AUTH_SECRET_KEY: "${AUTH_SECRET_KEY:-change-me-please}"
+
+      # Models runtime
+      KYC_MODEL_FORMAT: "${KYC_MODEL_FORMAT:-ONNX}"
+      KYC_DEVICE: "${KYC_DEVICE:-gpu}"
+
+      # Bind to all interfaces inside container
+      KYC_HOST: "0.0.0.0"
+      KYC_PORT: "8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+

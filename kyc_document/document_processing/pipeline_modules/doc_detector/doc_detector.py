@@ -6,6 +6,10 @@ import cv2
 
 class DocDetector:
     """Detects document and fixes perspective issues. Использует PT (YOLOv8) только для Borders, иначе ONNX/BaseModule."""
+    # Минимальная доля площади кадра, чтобы считать детекцию документа валидной.
+    # Если маска меньше — скорее всего это артефакт/ложная детекция.
+    MIN_MASK_AREA_FRAC = 0.08
+
     def __init__(self, model_format: str = 'ONNX', device='cpu', verbose: bool = False):
         self.model_name = 'DocDetector'
         self.model_format = model_format
@@ -40,21 +44,62 @@ class DocDetector:
             elif img.shape[2] == 4:
                 img = img[:, :, :3]
             img_bgr = img if is_bgr else cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            results = self.model(img_bgr, verbose=self.verbose)[0]
+            # Ultralytics по умолчанию использует conf≈0.25; для рамок документа это бывает излишне строго.
+            # Мы компенсируем возможный шум фильтрацией по площади маски.
+            results = self.model(img_bgr, verbose=self.verbose, conf=0.1)[0]
             if hasattr(results, 'masks') and results.masks is not None:
                 confs = results.boxes.conf.cpu().numpy()
-                idxs = np.argsort(confs)[::-1][:2]
-                bboxes = results.boxes.data.cpu().numpy()[idxs]
-                masks = results.masks.data.cpu().numpy()[idxs]
-                segm = []
-                for i, mask in enumerate(masks):
-                    mask_resized = cv2.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
-                    mask_bin = (mask_resized > 0.5).astype(np.uint8) * 255
-                    contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        segm.append(contours[0].reshape(-1, 2))
-                    else:
-                        segm.append(np.zeros((0, 2)))
+                boxes_all = results.boxes.data.cpu().numpy()
+                masks_all = results.masks.data.cpu().numpy()
+
+                h, w = img.shape[:2]
+                img_area = float(h * w) if h and w else 1.0
+
+                candidates = []
+                # Считаем площадь по бинаризованной маске в исходном размере.
+                for i in range(len(confs)):
+                    mask_resized = cv2.resize(
+                        masks_all[i],
+                        (w, h),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
+                    mask_bin = (mask_resized > 0.5).astype(np.uint8)
+                    area_frac = float(mask_bin.sum()) / img_area
+                    # Скоринг: приоритет площади (чтобы не выбирать «крошечные» детекции),
+                    # а confidence — как tie-breaker.
+                    score = (area_frac, float(confs[i]))
+                    candidates.append((score, i, mask_resized, mask_bin))
+
+                # Сортируем по площади, затем по уверенности.
+                candidates.sort(key=lambda x: x[0], reverse=True)
+
+                chosen = []
+                for score, i, mask_resized, mask_bin in candidates:
+                    area_frac = score[0]
+                    if area_frac < self.MIN_MASK_AREA_FRAC:
+                        continue
+                    chosen.append((i, mask_resized, mask_bin))
+                    if len(chosen) >= 2:
+                        break
+
+                # Если все маски маленькие — считаем, что документа нет (лучше без perspective-fix,
+                # чем искажать картинку по артефакту).
+                if not chosen:
+                    bboxes, masks, segm = [], [], []
+                else:
+                    idxs = np.array([i for i, _, _ in chosen], dtype=int)
+                    bboxes = boxes_all[idxs]
+                    masks = masks_all[idxs]
+                    segm = []
+                    for _, mask_resized, mask_bin in chosen:
+                        mask_u8 = (mask_bin * 255).astype(np.uint8)
+                        contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        if contours:
+                            # Берём самый большой контур, а не первый попавшийся.
+                            cnt = max(contours, key=cv2.contourArea)
+                            segm.append(cnt.reshape(-1, 2))
+                        else:
+                            segm.append(np.zeros((0, 2)))
             else:
                 bboxes, masks, segm = [], [], []
             meta = {

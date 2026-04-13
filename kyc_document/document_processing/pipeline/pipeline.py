@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from time import time
 from typing import Union, Dict, Tuple, Optional
@@ -126,15 +127,34 @@ class OCROptionsBelarus(OCROptionsClass):
 class OCROptionsUSA(OCROptionsClass):
     """OCR options for USA driver's licenses.
 
-    Keys field_0..field_19 match the YOLO class order from
-    docs_generator/usa/generator.py (IMAGE_FIELDS + TEXT_FIELDS through dob).
-    Подписи в интерфейсе: webapp/templates/index.html (USA_FIELD_LABELS).
-    field_0..2 (фото, мини-фото, подпись) в OCR не передаются.
+    Keys match the YOLO class order from docs_generator/usa/generator.py:
+      IMAGE_FIELDS (photo, mini_photo, handwritten_signature) +
+      TEXT_FIELDS (class..dob), without dob_short.
+    UI labels: webapp/templates/index.html.
+    photo/mini_photo/handwritten_signature в OCR не передаются.
     """
     
     needed_split = []
     
-    en_fields = [f'field_{i}' for i in range(3, 20)]
+    en_fields = [
+        "class",
+        "end",
+        "rest",
+        "firstname",
+        "lastname",
+        "address",
+        "sex",
+        "hgt",
+        "wgt",
+        "eyes",
+        "hair",
+        "dd",
+        "dln",
+        "iss",
+        "iss_duplicate",
+        "exp",
+        "dob",
+    ]
     
     ru_fields = []
     
@@ -482,6 +502,30 @@ class Pipeline:
         result = self.doctype.predict(img)
         doc_type = result[self.doctype.model_name]['doc_type']
         confidence = result[self.doctype.model_name]['confidence']
+
+        # Если детектор границ документа не нашёл адекватную область (или нашёл слишком маленькую),
+        # то DocType может быть "переуверенным" на нерелевантном изображении.
+        # В этом случае принудительно считаем тип неизвестным.
+        try:
+            dd = self.results.meta_results.get("DocDetector") or {}
+            bboxes = dd.get("bbox") or []
+            # bbox в формате [x1,y1,x2,y2,...]; берём максимальную площадь
+            if isinstance(bboxes, (list, tuple)) and len(bboxes) > 0 and hasattr(img, "shape"):
+                h, w = img.shape[:2]
+                img_area = float(max(1, h * w))
+                areas = []
+                for b in bboxes:
+                    if b is None or len(b) < 4:
+                        continue
+                    x1, y1, x2, y2 = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+                    areas.append(max(0.0, (x2 - x1)) * max(0.0, (y2 - y1)))
+                max_frac = (max(areas) / img_area) if areas else 0.0
+                min_frac = float(os.getenv("KYC_DOC_BBOX_MIN_FRAC", "0.12"))
+                if max_frac < min_frac:
+                    doc_type = "NONE"
+                    confidence = 0.0
+        except Exception:
+            pass
         self.results.meta_results['DocType'] = doc_type
         self.results.meta_results['Quality']['DocConf'] = confidence
         return doc_type

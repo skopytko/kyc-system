@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import cv2
 
@@ -55,6 +57,47 @@ def order_points(pts):
     rect[3] = pts[np.argmax(diff)]   # bottom-left
     return rect
 
+
+def _quad_from_hull(hull) -> Optional[np.ndarray]:
+    """Четыре угла документа под перспективу: не прямоугольник minAreaRect, а четырёхугольник по контуру.
+
+    Сначала approxPolyDP на выпуклой оболочке (впадины маски не тянут углы внутрь).
+    minAreaRect — только запасной вариант, если 4 вершины получить не удалось.
+    """
+    hull_area = float(cv2.contourArea(hull))
+    if hull_area < 1.0:
+        return None
+    peri = float(cv2.arcLength(hull, True))
+    if peri < 1e-6:
+        return None
+
+    best_approx = None
+    best_n = None
+    for eps in [
+        0.005, 0.01, 0.015, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.12, 0.15, 0.18, 0.22, 0.28, 0.35
+    ]:
+        approx = cv2.approxPolyDP(hull, eps * peri, True)
+        n = len(approx)
+        if n == 4:
+            quad = approx.reshape(4, 2).astype(np.float32)
+            qa = float(cv2.contourArea(quad))
+            if hull_area > 1.0 and qa < 0.75 * hull_area:
+                continue
+            return quad
+        if n > 4:
+            best_approx = approx
+            best_n = n
+
+    if best_approx is not None and best_n is not None and best_n > 4:
+        for extra in [0.4, 0.45, 0.5, 0.55, 0.6]:
+            approx = cv2.approxPolyDP(hull, extra * peri, True)
+            if len(approx) == 4:
+                return approx.reshape(4, 2).astype(np.float32)
+
+    rect = cv2.boxPoints(cv2.minAreaRect(hull)).astype(np.float32)
+    return rect
+
+
 def fix_perspective(img: np.ndarray, segments: np.ndarray):
     h, w = img.shape[:2]
     cnt_img = img.copy()
@@ -68,32 +111,29 @@ def fix_perspective(img: np.ndarray, segments: np.ndarray):
         for cnt in contours:
             cv2.drawContours(cnt_img, [cnt], -1, (0, 0, 255), 2)
             hull = cv2.convexHull(cnt)
-            peri = cv2.arcLength(hull, True)
-            for eps in [0.01, 0.02, 0.05, 0.1, 0.2]:
-                approx = cv2.approxPolyDP(hull, eps * peri, True)
-                if len(approx) == 4:
-                    break
-            if len(approx) == 4:
-                cv2.polylines(cnt_img, [approx], True, (255, 0, 0), 4)
-                quad = approx[:, 0, :].astype(np.float32)
-                rect = order_points(quad)
-                (tl, tr, br, bl) = rect
-                widthA = np.linalg.norm(br - bl)
-                widthB = np.linalg.norm(tr - tl)
-                maxWidth = int(max(widthA, widthB))
-                heightA = np.linalg.norm(tr - br)
-                heightB = np.linalg.norm(tl - bl)
-                maxHeight = int(max(heightA, heightB))
-                dst = np.array([
-                    [0, 0],
-                    [maxWidth - 1, 0],
-                    [maxWidth - 1, maxHeight - 1],
-                    [0, maxHeight - 1]], dtype="float32")
-                M = cv2.getPerspectiveTransform(rect, dst)
-                warped = cv2.warpPerspective(img, M, (maxWidth, maxHeight))
-                center_y = quad[:,1].mean()
-                center_x = quad[:,0].mean()
-                warped_with_pos.append((center_y, center_x, warped))
+            quad = _quad_from_hull(hull)
+            if quad is None:
+                continue
+            poly_draw = quad.astype(np.int32).reshape(-1, 1, 2)
+            cv2.polylines(cnt_img, [poly_draw], True, (255, 0, 0), 4)
+            rect = order_points(quad)
+            (tl, tr, br, bl) = rect
+            widthA = np.linalg.norm(br - bl)
+            widthB = np.linalg.norm(tr - tl)
+            maxWidth = int(max(widthA, widthB))
+            heightA = np.linalg.norm(tr - br)
+            heightB = np.linalg.norm(tl - bl)
+            maxHeight = int(max(heightA, heightB))
+            dst = np.array([
+                [0, 0],
+                [maxWidth - 1, 0],
+                [maxWidth - 1, maxHeight - 1],
+                [0, maxHeight - 1]], dtype="float32")
+            M = cv2.getPerspectiveTransform(rect, dst)
+            warped = cv2.warpPerspective(img, M, (maxWidth, maxHeight))
+            center_y = quad[:, 1].mean()
+            center_x = quad[:, 0].mean()
+            warped_with_pos.append((center_y, center_x, warped))
     
     if warped_with_pos:
         # Определяем направление расположения областей

@@ -9,6 +9,21 @@ logger = logging.getLogger(__name__)
 
 MIN_DOC_CONFIDENCE = 0.9
 
+# USA: важные поля, без которых считаем распознавание неприемлемым.
+# Остальные поля могут отсутствовать (из-за бликов/обрезки/особенностей штата/разметки).
+USA_TEXTFIELD_LABELS_REQUIRED: Set[str] = frozenset(
+    {
+        "firstname",
+        "lastname",
+        "address",
+        "sex",
+        "dob",
+        "dln",
+        "iss",
+        "exp",
+    }
+)
+
 # TextFieldsDetectorBelarus — полный набор классов (после 1 bbox на класс).
 BELARUS_TEXTFIELD_LABELS_EXPECTED: Set[str] = frozenset(
     [
@@ -32,8 +47,51 @@ BELARUS_TEXTFIELD_LABELS_EXPECTED: Set[str] = frozenset(
     ]
 )
 
-# TextFieldsDetectorUSA — field_0..field_19.
-USA_TEXTFIELD_LABELS_EXPECTED: Set[str] = frozenset(f"field_{i}" for i in range(20))
+# Беларусь: важные поля (для решения «годится ли снимок»).
+# Остальные (photo/signature/type/nationality/authority2/...) могут отсутствовать.
+BELARUS_TEXTFIELD_LABELS_REQUIRED: Set[str] = frozenset(
+    {
+        "passport_no",
+        "surname",
+        "names",
+        "nationality",
+        "identification_no",
+        "date_of_birth",
+        "place_of_birth",
+        "date_of_issue",
+        "date_of_expiry",
+        "sex",
+        "authority",
+        "code_of_issuing",
+        "type",
+    }
+)
+# TextFieldsDetectorUSA — names in docs_generator/usa/generator.py:
+# IMAGE_FIELDS (0–2) + TEXT_FIELDS without dob_short (through dob).
+USA_TEXTFIELD_LABELS_EXPECTED: Set[str] = frozenset(
+    {
+        "photo",
+        "mini_photo",
+        "handwritten_signature",
+        "class",
+        "end",
+        "rest",
+        "firstname",
+        "lastname",
+        "address",
+        "sex",
+        "hgt",
+        "wgt",
+        "eyes",
+        "hair",
+        "dd",
+        "dln",
+        "iss",
+        "iss_duplicate",
+        "exp",
+        "dob",
+    }
+)
 
 # Не требуем латинские дубликаты и «место жительства»: модель часто их не бьёт в bbox при
 # нормальном OCR русской стороны — иначе ложное «снимок не подходит» (см. RUSSIA_FIELDS в index.html).
@@ -79,12 +137,21 @@ def _needs_textfield_validation(doc_type: str, page_type: Optional[str]) -> bool
 def _expected_labels(doc_type: str, page_type: Optional[str]) -> Optional[Set[str]]:
     dt = (doc_type or "").lower()
     if dt.startswith("belarus"):
-        return BELARUS_TEXTFIELD_LABELS_EXPECTED
+        # Для capture_validation требуем только важные поля.
+        return BELARUS_TEXTFIELD_LABELS_REQUIRED
     if dt.startswith("usa_"):
         return USA_TEXTFIELD_LABELS_EXPECTED
     if dt.startswith("russia") and page_type == "passport_centerfold":
         return RUSSIA_CENTERFOLD_TEXTFIELD_LABELS_REQUIRED
     return None
+
+
+def _missing_fields_allowed(doc_type: str, page_type: Optional[str]) -> int:
+    dt = (doc_type or "").lower()
+    if dt.startswith("usa_"):
+        # Для USA используем критерий по обязательным полям (а не по количеству пропусков).
+        return 0
+    return 0
 
 
 def evaluate_capture(
@@ -102,6 +169,7 @@ def evaluate_capture(
       - не все ожидаемые поля TextFieldsDetector для типа документа
     """
     reasons: List[Dict[str, str]] = []
+    textfields_debug: Dict[str, Any] = {}
 
     quality = report.get("Quality") or {}
     doc_conf = quality.get("DocConf")
@@ -132,21 +200,57 @@ def evaluate_capture(
 
     if _needs_textfield_validation(doc_type, page_type_s):
         expected = _expected_labels(doc_type, page_type_s)
-        _, found_list = _extract_text_field_labels(meta_results)
+        detector_key, found_list = _extract_text_field_labels(meta_results)
         found_set = set(found_list)
         if expected:
             missing = sorted(expected - found_set)
-            if missing:
-                preview = ", ".join(missing[:8])
-                if len(missing) > 8:
-                    preview += f" … (+{len(missing) - 8})"
-                reasons.append(
-                    {
-                        "code": "incomplete_textfields",
-                        "title": "Не все зоны полей найдены",
-                        "detail": f"Нет детекций для: {preview}",
-                    }
-                )
+            allowed = _missing_fields_allowed(doc_type, page_type_s)
+
+            # USA: отклоняем только если отсутствуют обязательные поля
+            dt = (doc_type or "").lower()
+            if dt.startswith("usa_"):
+                missing_required = sorted(USA_TEXTFIELD_LABELS_REQUIRED - found_set)
+                textfields_debug = {
+                    "detector": detector_key,
+                    "expected": sorted(expected),
+                    "found": sorted(found_set),
+                    "missing": missing,
+                    "missing_count": len(missing),
+                    "missing_allowed": allowed,
+                    "required": sorted(USA_TEXTFIELD_LABELS_REQUIRED),
+                    "missing_required": missing_required,
+                }
+                if missing_required:
+                    reasons.append(
+                        {
+                            "code": "incomplete_textfields",
+                            "title": "Не все зоны важных полей найдены",
+                            "detail": "Не найдены важные зоны полей",
+                        }
+                    )
+            else:
+                textfields_debug = {
+                    "detector": detector_key,
+                    "expected": sorted(expected),
+                    "found": sorted(found_set),
+                    "missing": missing,
+                    "missing_count": len(missing),
+                    "missing_allowed": allowed,
+                }
+                if missing and len(missing) > allowed:
+                    preview = ", ".join(missing[:8])
+                    if len(missing) > 8:
+                        preview += f" … (+{len(missing) - 8})"
+                    reasons.append(
+                        {
+                            "code": "incomplete_textfields",
+                            "title": "Не все зоны полей найдены",
+                            "detail": (
+                                f"Нет детекций для: {preview}"
+                                + (f" (пропущено {len(missing)} > допуска {allowed})" if allowed else "")
+                            ),
+                        }
+                    )
 
     ok = len(reasons) == 0
     details_text = "\n".join(f"• {r['title']}: {r['detail']}" for r in reasons)
@@ -163,4 +267,6 @@ def evaluate_capture(
         "min_doc_confidence": min_doc_confidence,
         "reasons": reasons,
         "details_text": details_text,
+        # Debug info for UI: which textfields were missing/found/expected
+        "textfields": textfields_debug,
     }
