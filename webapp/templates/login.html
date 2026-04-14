@@ -22,6 +22,11 @@
       err.textContent = '';
       if (!pass) { err.textContent = 'Введите пароль'; return; }
 
+      if (!window.crypto || !window.crypto.subtle) {
+        err.textContent = 'Авторизация требует HTTPS (или доступ через localhost). Откройте https://... или включите доверие к небезопасному origin в браузере.';
+        return;
+      }
+
       try {
         // Get nonce and salt
         const nonceRes = await fetch('/auth/nonce');
