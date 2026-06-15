@@ -5,6 +5,8 @@ from typing import Union
 from pathlib import Path
 from PIL import Image
 
+from kyc_document.document_processing.processing.torch_device import torch_device
+
 PAGE_CLASSES = ['passport_centerfold', 'passport_pages']
 NUM_CLASSES = len(PAGE_CLASSES)
 
@@ -22,7 +24,7 @@ class PassportPageType:
                  device: str = 'cpu', verbose: bool = False,
                  country: str = 'russia'):
         self.model_name = 'PassportPageType'
-        self.device = torch.device(device)
+        self.device = torch_device(device)
         self.verbose = verbose
         self.country = country.lower()
         if model_path is None:
