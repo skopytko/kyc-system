@@ -8,6 +8,11 @@ import cv2
 import numpy as np
 
 from ..pipeline_modules import *
+from ..processing.russia_field_formats import (
+    format_date_ddmmyyyy,
+    format_department_code,
+    format_series_number,
+)
 
 
 @dataclass(init=False)
@@ -239,11 +244,33 @@ class PipelineResults:
         return None
 
     @property
+    def seal_info(self) -> Optional[Dict]:
+        """Gets seal detection summary (without heavy image/mask data)."""
+        raw = self.meta_results.get('PassportSealDetector')
+        if not raw or not isinstance(raw, dict):
+            return None
+        return {
+            'total_seals': raw.get('total_seals', 0),
+            'has_seals': raw.get('has_seals', False),
+            'last_seal': self._strip_seal(raw.get('last_seal')),
+            'seals': [self._strip_seal(s) for s in raw.get('seals', [])],
+        }
+
+    @staticmethod
+    def _strip_seal(seal: Optional[Dict]) -> Optional[Dict]:
+        """Return seal dict without heavy numpy arrays (mask, images)."""
+        if seal is None:
+            return None
+        return {k: v for k, v in seal.items()
+                if k not in ('mask',)}
+
+    @property
     def full_report(self) -> dict:
         """Returns full report in dict format"""
         summary_dict = {}
         summary_dict['DocType'] = self.doctype
         summary_dict['PassportPageType'] = self.passport_page_type
+        summary_dict['SealInfo'] = self.seal_info
         summary_dict['OCR'] = self.ocr
         summary_dict['Quality'] = self.quality
         summary_dict['Timings'] = self.timings
@@ -309,9 +336,17 @@ class Pipeline:
         self.ocr_options = OCROptionsClass
 
         # Страно-специфичные модели подгружаем лениво после определения doc_type
-        self.text_fields = None  # TextFieldsDetectorRussia / Belarus и др.
-        self.passport_page_type = None  # PassportPageType только для Russia
-        self.seal_detector = None  # PassportSealDetector только для Russia passport_pages
+        self.text_fields = None  # TextFieldsDetectorRussia / Belarus / USA
+        self._text_fields_country = None  # 'russia' | 'belarus' | 'usa'
+        self._usa_state = None
+        self._passport_page_type_models = {}   # country -> PassportPageType
+        self._seal_detector_models = {}        # country -> PassportSealDetector
+
+    def reset_text_fields_detector(self) -> None:
+        """Сброс кэша детектора полей (для batch-тестов — свой детектор на каждый кадр)."""
+        self.text_fields = None
+        self._text_fields_country = None
+        self._usa_state = None
 
     def __call__(self, img_path: Union[Path, str, np.ndarray],
                  ocr=True,
@@ -321,6 +356,7 @@ class Pipeline:
                  low_quality=True,
                  docconf=0.5,
                  img_size=1500,
+                 reset_text_fields: bool = False,
                  ) -> PipelineResults:
         """
         Main pipeline processing method.
@@ -334,10 +370,13 @@ class Pipeline:
             low_quality: Whether to process low quality images.
             docconf: Минимальная уверенность DocType (0–1); ниже — остановка пайплайна при low_quality=False.
             img_size: Resize image to this size for processing.
+            reset_text_fields: Пересоздать TextFieldsDetector на этом кадре (batch-тесты).
 
         Returns:
             PipelineResults with extracted information.
         """
+        if reset_text_fields:
+            self.reset_text_fields_detector()
 
         self.results = PipelineResults()
 
@@ -366,15 +405,17 @@ class Pipeline:
 
         self._init_text_fields(country, state)
 
-        # PassportPageType: только для russia, инициализируем лениво
-        if country == 'russia':
-            if self.passport_page_type is None:
-                self.passport_page_type = PassportPageType(
+        # PassportPageType: для russia и belarus, модели кэшируются по стране
+        if country in ('russia', 'belarus'):
+            if country not in self._passport_page_type_models:
+                self._passport_page_type_models[country] = PassportPageType(
                     model_format=self.model_format,
                     device=self.device,
                     verbose=self.verbose,
+                    country=country,
                 )
-            ppt_result = self.passport_page_type.predict(img)
+            ppt_model = self._passport_page_type_models[country]
+            ppt_result = ppt_model.predict(img)
             self.results.meta_results['PassportPageType'] = {'page_type': ppt_result}
 
         #getting quality
@@ -395,18 +436,22 @@ class Pipeline:
             ):
                 return self.results
 
-        # Детектор печатей - только для обычных страниц паспорта russia
-        if self.results.meta_results.get('PassportPageType', {}).get('page_type') == 'passport_pages':
-            if self.seal_detector is None:
-                self.seal_detector = PassportSealDetector(
+        page_type = self.results.meta_results.get('PassportPageType', {}).get('page_type')
+
+        # Детектор печатей — для страниц с печатями (passport_pages) у russia и belarus
+        if page_type == 'passport_pages' and country in ('russia', 'belarus'):
+            if country not in self._seal_detector_models:
+                self._seal_detector_models[country] = PassportSealDetector(
                     model_format='PT',
                     device=self.device,
                     verbose=self.verbose,
+                    country=country,
                 )
+            self.seal_detector = self._seal_detector_models[country]
             self._model_call(self._passport_seal_detector, img)
-        # OCR - для центральных разворотов паспорта russia, для belarus, и для usa
-        elif (self.results.meta_results.get('PassportPageType', {}).get('page_type') == 'passport_centerfold'
-              or country in ('belarus', 'usa')):
+        # OCR — для центральных разворотов паспорта (russia/belarus) и для usa
+        elif (page_type == 'passport_centerfold'
+              or country == 'usa'):
             if find_text_fields:
                 rotate_licence = self.ocr_options.needs_licence_rotation
                 self._model_call(self._fields_detector, img, rotate_licence=rotate_licence)
@@ -447,9 +492,13 @@ class Pipeline:
 
         For USA, a new detector is created per state (since each state
         has its own model). For Russia/Belarus, the detector is reused.
+
+        При смене страны детектор пересоздаётся — иначе после ошибочного
+        DocType (usa_*) на seedream-снимке все следующие russia_passport
+        в batch-прогоне шли бы через TextFieldsDetectorUSA.
         """
         if country == 'usa':
-            if not hasattr(self, '_usa_state') or self._usa_state != state:
+            if self._text_fields_country != 'usa' or self._usa_state != state:
                 from ..pipeline_modules.textfields_detector import TextFieldsDetectorUSA
                 self.text_fields = TextFieldsDetectorUSA(
                     state=state,
@@ -457,22 +506,26 @@ class Pipeline:
                     device=self.device,
                     verbose=self.verbose,
                 )
+                self._text_fields_country = 'usa'
                 self._usa_state = state
-        elif self.text_fields is None:
-            if country == 'belarus':
+        elif country == 'belarus':
+            if self._text_fields_country != 'belarus':
                 from ..pipeline_modules.textfields_detector import TextFieldsDetectorBelarus
                 self.text_fields = TextFieldsDetectorBelarus(
                     model_format=self.model_format,
                     device=self.device,
                     verbose=self.verbose,
                 )
-            elif country == 'russia':
+                self._text_fields_country = 'belarus'
+        elif country == 'russia':
+            if self._text_fields_country != 'russia':
                 from ..pipeline_modules.textfields_detector import TextFieldsDetector
                 self.text_fields = TextFieldsDetector(
                     model_format=self.model_format,
                     device=self.device,
                     verbose=self.verbose,
                 )
+                self._text_fields_country = 'russia'
 
     def _angle(self, img):
         """
@@ -692,9 +745,14 @@ class Pipeline:
                     ocred_words.append(result)
 
 
-            if field_name == 'Licence_number':
-                # Серия/номер (загран): только цифры, шаблон «2 + 2 + 6» с пробелами; O часто путают с нулём.
-                chunk = ' '.join(ocred_words).strip()
+            chunk = ' '.join(ocred_words).strip()
+            is_russia = str(doc_type).lower() == 'russia'
+
+            if field_name == 'Licence_number' and is_russia:
+                formatted = format_series_number(chunk)
+                ocr_dict[field_name] = formatted or ''
+            elif field_name == 'Licence_number':
+                # Загран / прочие: только цифры, шаблон «2 + 2 + 6» с пробелами; O часто путают с нулём.
                 chunk = chunk.replace('O', '0').replace('o', '0')
                 digits = ''.join(c for c in chunk if c.isdigit())
                 if len(digits) >= 10:
@@ -704,6 +762,21 @@ class Pipeline:
                     ocr_dict[field_name] = f'{digits[:2]} {digits[2:4]} {digits[4:]}'.strip()
                 else:
                     ocr_dict[field_name] = digits
+            elif field_name == 'Issue_organisation_code' and is_russia:
+                formatted = format_department_code(chunk)
+                ocr_dict[field_name] = formatted or ''
+            elif field_name == 'Issue_organisation_code':
+                chunk = chunk.replace('O', '0').replace('o', '0')
+                digits = ''.join(c for c in chunk if c.isdigit())
+                if len(digits) >= 6:
+                    d = digits[:6]
+                    ocr_dict[field_name] = f'{d[:3]}-{d[3:6]}'
+                else:
+                    ocr_dict[field_name] = digits
+            elif field_name in ('Birth_date', 'Issue_date') and is_russia:
+                date_raw = '.'.join(ocred_words).strip() or chunk
+                formatted = format_date_ddmmyyyy(date_raw)
+                ocr_dict[field_name] = formatted or ''
             elif 'date' in field_name.lower() and doc_type == 'SNILS':
                 ocr_dict[field_name] = ' '.join(ocred_words)
             elif 'date' in field_name.lower() and doc_type.lower() == 'belarus':

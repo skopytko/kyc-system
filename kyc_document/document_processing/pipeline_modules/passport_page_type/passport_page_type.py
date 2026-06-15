@@ -8,17 +8,28 @@ from PIL import Image
 PAGE_CLASSES = ['passport_centerfold', 'passport_pages']
 NUM_CLASSES = len(PAGE_CLASSES)
 
+_COUNTRY_WEIGHTS = {
+    'russia': 'kyc_document/document_processing/models/PassportPageType/russia/best.pt',
+    'belarus': 'kyc_document/document_processing/models/PassportPageType/belarus/best.pt',
+}
+
 class PassportPageType:
-    """Detects passport page type from image (centerfold/page) using PyTorch MobileNetV3."""
-    def __init__(self, model_format: str = 'PT', model_path: str = None, device: str = 'cpu', verbose: bool = False):
+    """Detects passport page type from image (centerfold/page) using PyTorch MobileNetV3.
+    
+    Supports per-country weights: pass ``country='russia'`` or ``country='belarus'``.
+    """
+    def __init__(self, model_format: str = 'PT', model_path: str = None,
+                 device: str = 'cpu', verbose: bool = False,
+                 country: str = 'russia'):
         self.model_name = 'PassportPageType'
         self.device = torch.device(device)
         self.verbose = verbose
-        # model_format игнорируется, только для совместимости
+        self.country = country.lower()
         if model_path is None:
-            model_path = 'kyc_document/document_processing/models/PassportPageType/best.pt'
+            model_path = _COUNTRY_WEIGHTS.get(self.country)
+            if model_path is None:
+                raise ValueError(f"No PassportPageType weights for country={self.country}")
         self.model = models.mobilenet_v3_small(weights=None)
-        # Replace classifier for 2 classes
         last_linear = None
         for m in reversed(self.model.classifier):
             if isinstance(m, torch.nn.Linear):
@@ -26,7 +37,7 @@ class PassportPageType:
                 break
         in_features = last_linear.in_features
         self.model.classifier[-1] = torch.nn.Linear(in_features, NUM_CLASSES)
-        state_dict = torch.load(model_path, map_location=self.device)
+        state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
         self.model.load_state_dict(state_dict)
         self.model = self.model.to(self.device)
         self.model.eval()

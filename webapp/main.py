@@ -264,7 +264,7 @@ async def ocr_endpoint(
 if __name__ == "__main__":
     import uvicorn
 
-    _port = int(os.getenv("KYC_PORT", os.getenv("PORT", "8001")))
+    _port = int(os.getenv("KYC_PORT", os.getenv("PORT", "8000")))
     _host = os.getenv("KYC_HOST", "127.0.0.1")
     uvicorn.run("webapp.main:app", host=_host, port=_port, reload=True)
 

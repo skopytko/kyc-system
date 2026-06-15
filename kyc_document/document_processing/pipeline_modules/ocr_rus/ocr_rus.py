@@ -50,16 +50,20 @@ class OCRRus(BaseModule):
         Returns:
             Corrected text
         """
-        if field_type in ['Last_name_ru',
-                          'First_name_ru',
-                          'Birth_place_ru',
-                          'Living_region_ru',
-                          'Middle_name_ru']:
-            return self.check_russian_names(text)
+        if field_type in [
+            'Last_name_ru',
+            'First_name_ru',
+            'Birth_place_ru',
+            'Living_region_ru',
+            'Middle_name_ru',
+        ]:
+            out = self.check_russian_names(text)
         elif field_type in ['Sex_ru']:
-            return self.check_rus_sex(text)
+            out = self.check_rus_sex(text)
         else:
-            return text
+            out = text
+
+        return self.dedupe_space_repeats(out)
 
     @staticmethod
     def check_russian_names(name: str) -> str:

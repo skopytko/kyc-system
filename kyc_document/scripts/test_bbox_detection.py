@@ -558,8 +558,8 @@ def main():
     parser = argparse.ArgumentParser(
         description='Тестирование точности детекции bbox текстовых полей'
     )
-    # Определяем корень проекта
-    project_root = Path(__file__).parent.parent.parent.parent
+    # Корень репозитория: kyc_document/scripts/ -> parents[2]
+    project_root = Path(__file__).resolve().parent.parent.parent
     
     parser.add_argument(
         '--images_dir',

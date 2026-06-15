@@ -83,3 +83,52 @@ class BaseModule:
         else:
             raise Exception("Unsupported input type as img")
         return img
+
+    @staticmethod
+    def dedupe_space_repeats(text: str) -> str:
+        """
+        Collapse immediate repetitions separated by spaces.
+
+        Examples:
+          - "ИВАНОВ ИВАНОВ" -> "ИВАНОВ"
+          - "A B A B" -> "A B"
+        """
+        if not text:
+            return text
+        parts = [p for p in str(text).split(" ") if p != ""]
+        if len(parts) < 2:
+            return str(text).strip()
+
+        # Collapse consecutive duplicate tokens
+        out = [parts[0]]
+        for p in parts[1:]:
+            if p.casefold() == out[-1].casefold():
+                continue
+            out.append(p)
+
+        # Collapse immediate repeated n-grams (up to 4 tokens)
+        for _ in range(3):
+            changed = False
+            i = 0
+            new_out = []
+            while i < len(out):
+                collapsed = False
+                for n in (4, 3, 2):
+                    if i + 2 * n <= len(out):
+                        a = [x.casefold() for x in out[i : i + n]]
+                        b = [x.casefold() for x in out[i + n : i + 2 * n]]
+                        if a == b:
+                            new_out.extend(out[i : i + n])
+                            i += 2 * n
+                            changed = True
+                            collapsed = True
+                            break
+                if collapsed:
+                    continue
+                new_out.append(out[i])
+                i += 1
+            out = new_out
+            if not changed:
+                break
+
+        return " ".join(out).strip()

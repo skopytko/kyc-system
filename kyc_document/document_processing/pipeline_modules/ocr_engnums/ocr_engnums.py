@@ -51,19 +51,23 @@ class OCREngNums(BaseModule):
         Returns:
             Corrected text
         """
-        if field_type in ['Issue_date',
-                          'Expiration_date',
-                          'Birth_date']:
+        if field_type in [
+            'Issue_date',
+            'Expiration_date',
+            'Birth_date',
+        ]:
             try:
-                return self.check_ddmmyyyy(text)
+                out = self.check_ddmmyyyy(text)
             except ValueError:
-                return text
+                out = text
         elif field_type in ['Sex_en']:
-            return self.check_en_sex(text)
+            out = self.check_en_sex(text)
         elif field_type in ['Driver_class']:
-            return self.check_driver_class(text)
+            out = self.check_driver_class(text)
         else:
-            return text
+            out = text
+
+        return self.dedupe_space_repeats(out)
 
     @staticmethod
     def check_driver_class(driver_class: str) -> str:

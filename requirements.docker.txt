@@ -89,4 +89,5 @@ itsdangerous
 mlflow
 rich
 openai
+pytesseract
 

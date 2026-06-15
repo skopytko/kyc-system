@@ -229,7 +229,7 @@
 
         if (parsed.country === 'russia' && pageType === 'passport_centerfold') {
           RUSSIA_FIELDS.forEach(([label, key]) => { if (ocr[key] != null) addItem(label, ocr[key]); });
-        } else if (parsed.country === 'belarus') {
+        } else if (parsed.country === 'belarus' && pageType === 'passport_centerfold') {
           BELARUS_FIELDS.forEach(([label, key]) => { if (ocr[key] != null) addItem(label, ocr[key]); });
         } else if (parsed.country === 'usa') {
           const shown = new Set();
@@ -245,8 +245,17 @@
           });
         } else if (ocr && typeof ocr === 'object' && Object.keys(ocr).length) {
           Object.entries(ocr).forEach(([key, val]) => addItem(key, val));
-        } else if (parsed.country === 'russia' && pageType === 'passport_pages') {
+        } else if ((parsed.country === 'russia' || parsed.country === 'belarus') && pageType === 'passport_pages') {
           addItem('Страница', 'Обнаружена страница паспорта (не центральный разворот)');
+        }
+
+        // Печати (SealInfo)
+        const sealInfo = rep.SealInfo;
+        if (sealInfo && sealInfo.has_seals) {
+          addItem('Печати', `Найдено печатей: ${sealInfo.total_seals}`);
+          if (sealInfo.last_seal) {
+            addItem('Последняя печать', `Уверенность: ${(sealInfo.last_seal.confidence * 100).toFixed(1)}%, сторона: ${sealInfo.last_seal.side === 'left' ? 'левая' : 'правая'}`);
+          }
         }
 
         // Качество (данные всегда в отчёте; блок на странице — только если отмечен «Проверка качества»)

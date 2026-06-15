@@ -4,22 +4,33 @@ from pathlib import Path
 import numpy as np
 import cv2
 
+_COUNTRY_WEIGHTS = {
+    'russia': 'kyc_document/document_processing/models/PassportSeal/russia/best.pt',
+    'belarus': 'kyc_document/document_processing/models/PassportSeal/belarus/best.pt',
+}
+
 class PassportSealDetector:
-    """Detects passport seals and selects the most recent one based on passport page layout."""
+    """Detects passport seals and selects the most recent one based on passport page layout.
     
-    def __init__(self, model_format: str = 'PT', device='cpu', verbose: bool = False):
+    Supports per-country weights: pass ``country='russia'`` or ``country='belarus'``.
+    """
+    
+    def __init__(self, model_format: str = 'PT', device='cpu', verbose: bool = False,
+                 country: str = 'russia'):
         self.model_name = 'PassportSealDetector'
         self.model_format = model_format
         self.device = device
         self.verbose = verbose
+        self.country = country.lower()
         
         if model_format == 'PT':
             from ultralytics import YOLO
-            model_path = 'kyc_document/document_processing/models/PassportSeal/best.pt'
+            model_path = _COUNTRY_WEIGHTS.get(self.country)
+            if model_path is None:
+                raise ValueError(f"No PassportSeal weights for country={self.country}")
             self.model = YOLO(model_path)
             self.pt_mode = True
         else:
-            # Для других форматов можно добавить поддержку позже
             raise NotImplementedError(f"Model format {model_format} not supported yet")
     
     def predict(self, img: Union[str, Path, np.ndarray]) -> dict:

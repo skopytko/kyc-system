@@ -95,6 +95,13 @@ USA_TEXTFIELD_LABELS_EXPECTED: Set[str] = frozenset(
 
 # Не требуем латинские дубликаты и «место жительства»: модель часто их не бьёт в bbox при
 # нормальном OCR русской стороны — иначе ложное «снимок не подходит» (см. RUSSIA_FIELDS в index.html).
+try:
+    from kyc_document.document_processing.processing.russia_field_formats import (
+        validate_russia_ocr_fields,
+    )
+except ImportError:
+    validate_russia_ocr_fields = None  # type: ignore[misc, assignment]
+
 RUSSIA_CENTERFOLD_TEXTFIELD_LABELS_REQUIRED: Set[str] = frozenset(
     {
         "Last_name_ru",
@@ -126,7 +133,7 @@ def _extract_text_field_labels(meta_results: Optional[dict]) -> Tuple[Optional[s
 def _needs_textfield_validation(doc_type: str, page_type: Optional[str]) -> bool:
     dt = (doc_type or "").lower()
     if dt.startswith("belarus"):
-        return True
+        return page_type == "passport_centerfold"
     if dt.startswith("usa_"):
         return True
     if dt.startswith("russia") and page_type == "passport_centerfold":
@@ -137,8 +144,9 @@ def _needs_textfield_validation(doc_type: str, page_type: Optional[str]) -> bool
 def _expected_labels(doc_type: str, page_type: Optional[str]) -> Optional[Set[str]]:
     dt = (doc_type or "").lower()
     if dt.startswith("belarus"):
-        # Для capture_validation требуем только важные поля.
-        return BELARUS_TEXTFIELD_LABELS_REQUIRED
+        if page_type == "passport_centerfold":
+            return BELARUS_TEXTFIELD_LABELS_REQUIRED
+        return None
     if dt.startswith("usa_"):
         return USA_TEXTFIELD_LABELS_EXPECTED
     if dt.startswith("russia") and page_type == "passport_centerfold":
@@ -251,6 +259,21 @@ def evaluate_capture(
                             ),
                         }
                     )
+
+    # Россия, разворот: все обязательные поля OCR должны быть заполнены; у части — строгий формат
+    if (
+        validate_russia_ocr_fields is not None
+        and (doc_type or "").lower().startswith("russia")
+        and page_type_s == "passport_centerfold"
+        and meta_results
+    ):
+        ocr = meta_results.get("OCR") or {}
+        if isinstance(ocr, dict):
+            ocr_reasons = validate_russia_ocr_fields(ocr, RUSSIA_CENTERFOLD_TEXTFIELD_LABELS_REQUIRED)
+            reasons.extend(ocr_reasons)
+            if ocr_reasons:
+                textfields_debug = dict(textfields_debug)
+                textfields_debug["ocr_validation"] = ocr_reasons
 
     ok = len(reasons) == 0
     details_text = "\n".join(f"• {r['title']}: {r['detail']}" for r in reasons)
