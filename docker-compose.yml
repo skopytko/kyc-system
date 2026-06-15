@@ -15,16 +15,9 @@ services:
 
       # Models runtime
       KYC_MODEL_FORMAT: "${KYC_MODEL_FORMAT:-ONNX}"
-      KYC_DEVICE: "${KYC_DEVICE:-gpu}"
+      KYC_DEVICE: "${KYC_DEVICE:-cpu}"
 
       # Bind to all interfaces inside container
       KYC_HOST: "0.0.0.0"
       KYC_PORT: "8000"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
